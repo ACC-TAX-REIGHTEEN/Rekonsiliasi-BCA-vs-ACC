@@ -149,8 +149,45 @@ unmatched_bca = bca_df[~bca_df['Matched']].copy()
 unmatched_acc['Keterangan Rekonsiliasi'] = 'Hanya ada di Accurate'
 unmatched_bca['Keterangan Rekonsiliasi'] = 'Hanya ada di BCA'
 unmatched_bca.rename(columns={'Tanggal Transaksi': 'Tanggal', 'Kredit': 'Penambahan', 'Debet': 'Pengurangan'}, inplace=True)
-unmatched_all = pd.concat([unmatched_acc[['Tanggal', 'No. Sumber', 'Keterangan', 'Penambahan', 'Pengurangan', 'Keterangan Rekonsiliasi']], unmatched_bca[['Tanggal', 'Keterangan', 'Penambahan', 'Pengurangan', 'Keterangan Rekonsiliasi']]], ignore_index=True)
+
+unmatched_acc['Keterangan Beda Tanggal'] = ''
+unmatched_bca['Keterangan Beda Tanggal'] = ''
+
+for a_idx, a_row in unmatched_acc.iterrows():
+    if a_row['Keterangan Beda Tanggal'] != '': continue
+    for col in ['Penambahan', 'Pengurangan']:
+        target_val = a_row[col]
+        if target_val > 0:
+            potential_bca = unmatched_bca[(unmatched_bca['Keterangan Beda Tanggal'] == '') & (unmatched_bca[col] > 0)]
+            if not potential_bca.empty:
+                matched_idx = get_matching_indices(potential_bca.index.tolist(), potential_bca[col].tolist(), target_val)
+                if matched_idx:
+                    matched_rows = unmatched_bca.loc[matched_idx]
+                    bca_dates = ", ".join(sorted(list(set(x.strftime('%d/%m/%Y') for x in matched_rows['Tanggal'] if pd.notna(x)))))
+                    unmatched_acc.at[a_idx, 'Keterangan Beda Tanggal'] = f"BCA Tgl {bca_dates}"
+                    acc_date_str = a_row['Tanggal'].strftime('%d/%m/%Y') if pd.notna(a_row['Tanggal']) else "-"
+                    for m_idx in matched_idx:
+                        unmatched_bca.at[m_idx, 'Keterangan Beda Tanggal'] = f"Accurate Tgl {acc_date_str}"
+
+for b_idx, b_row in unmatched_bca.iterrows():
+    if b_row['Keterangan Beda Tanggal'] != '': continue
+    for col in ['Penambahan', 'Pengurangan']:
+        target_val = b_row[col]
+        if target_val > 0:
+            potential_acc = unmatched_acc[(unmatched_acc['Keterangan Beda Tanggal'] == '') & (unmatched_acc[col] > 0)]
+            if not potential_acc.empty:
+                matched_idx = get_matching_indices(potential_acc.index.tolist(), potential_acc[col].tolist(), target_val)
+                if matched_idx:
+                    matched_rows = unmatched_acc.loc[matched_idx]
+                    acc_dates = ", ".join(sorted(list(set(x.strftime('%d/%m/%Y') for x in matched_rows['Tanggal'] if pd.notna(x)))))
+                    unmatched_bca.at[b_idx, 'Keterangan Beda Tanggal'] = f"Accurate Tgl {acc_dates}"
+                    bca_date_str = b_row['Tanggal'].strftime('%d/%m/%Y') if pd.notna(b_row['Tanggal']) else "-"
+                    for m_idx in matched_idx:
+                        unmatched_acc.at[m_idx, 'Keterangan Beda Tanggal'] = f"BCA Tgl {bca_date_str}"
+
+unmatched_all = pd.concat([unmatched_acc[['Tanggal', 'No. Sumber', 'Keterangan', 'Penambahan', 'Pengurangan', 'Keterangan Rekonsiliasi', 'Keterangan Beda Tanggal']], unmatched_bca[['Tanggal', 'Keterangan', 'Penambahan', 'Pengurangan', 'Keterangan Rekonsiliasi', 'Keterangan Beda Tanggal']]], ignore_index=True)
 unmatched_all.sort_values(by=['Keterangan Rekonsiliasi', 'Tanggal'], ascending=[True, True], inplace=True)
+
 df_matched = pd.DataFrame(matched_data)
 if not df_matched.empty: df_matched.sort_values(by='Tanggal Bank', inplace=True)
 
@@ -173,19 +210,23 @@ for cell in ws[1]: cell.font = bold_font
 ws.cell(row=1, column=1).font = bold_font
 ws.cell(row=start_unmatched, column=1).font = bold_font
 ws.cell(row=start_matched, column=1).font = bold_font
+
 fill_summary, fill_unmatched, fill_matched = PatternFill(start_color='EAF2F8', end_color='EAF2F8', fill_type='solid'), PatternFill(start_color='FDEDEC', end_color='FDEDEC', fill_type='solid'), PatternFill(start_color='EAFAF1', end_color='EAFAF1', fill_type='solid')
+
 for row in ws.iter_rows(min_row=2, max_row=len(summary_data)+1, min_col=1, max_col=2):
     for cell in row:
         cell.fill = fill_summary
         if cell.column == 2: cell.number_format = '#,##0'
+
 if not unmatched_all.empty:
     h_row = start_unmatched + 1
     for cell in ws[h_row]: cell.font = bold_font
-    for row in ws.iter_rows(min_row=h_row+1, max_row=h_row+len(unmatched_all), min_col=1, max_col=6):
+    for row in ws.iter_rows(min_row=h_row+1, max_row=h_row+len(unmatched_all), min_col=1, max_col=7):
         for cell in row:
             cell.fill = fill_unmatched
             if cell.column == 1: cell.number_format = 'DD/MM/YYYY'
             if cell.column in [4, 5]: cell.number_format = '#,##0'
+
 if not df_matched.empty:
     h_row = start_matched + 1
     for cell in ws[h_row]: cell.font = bold_font
@@ -194,6 +235,7 @@ if not df_matched.empty:
             cell.fill = fill_matched
             if cell.column in [1, 2]: cell.number_format = 'DD/MM/YYYY'
             if cell.column == 6: cell.number_format = '#,##0'
+
 kolom_lebar = {'A': 15, 'B': 20, 'C': 45, 'D': 45, 'E': 25, 'F': 20, 'G': 25}
 for col, width in kolom_lebar.items(): ws.column_dimensions[col].width = width
 
